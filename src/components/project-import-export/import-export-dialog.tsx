@@ -36,10 +36,11 @@ import { useRouter } from "next/navigation";
 interface ImportExportDialogProps {
   mode: "import" | "export";
   projectId?: string; // 导出时需要的项目ID
+  onImportComplete?: () => void;
   children: React.ReactNode;
 }
 
-export function ImportExportDialog({ mode, projectId, children }: ImportExportDialogProps) {
+export function ImportExportDialog({ mode, projectId, onImportComplete, children }: ImportExportDialogProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -147,6 +148,9 @@ export function ImportExportDialog({ mode, projectId, children }: ImportExportDi
 
       if (result.success && result.projectId) {
         setSuccess(`Project imported successfully! ${result.importedMediaCount || 0} media files, ${result.importedTracksCount || 0} tracks imported.`);
+        
+        // 调用导入完成回调
+        onImportComplete?.();
         
         // 跳转到新项目
         setTimeout(() => {

@@ -21,6 +21,7 @@ import { DeleteProjectDialog } from "@/components/delete-project-dialog";
 import { RenameProjectDialog } from "@/components/rename-project-dialog";
 import { ProjectActions } from "@/components/project-import-export/project-actions";
 import { BulkImportExport } from "@/components/project-import-export/bulk-import-export";
+import { ImportExportDialog } from "@/components/project-import-export/import-export-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -562,14 +563,21 @@ function ProjectCard({
                 >
                   Duplicate
                 </DropdownMenuItem>
+                
                 <DropdownMenuSeparator />
-                <ProjectActions projectId={project.id}>
-                  <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
+                <ImportExportDialog mode="export" projectId={project.id}>
+                  <DropdownMenuItem 
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                  >
                     <Download className="h-4 w-4 mr-2" />
-                    Export Project
+                    Export
                   </DropdownMenuItem>
-                </ProjectActions>
+                </ImportExportDialog>
                 <DropdownMenuSeparator />
+                
                 <DropdownMenuItem
                   variant="destructive"
                   onClick={(e) => {
