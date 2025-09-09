@@ -2,12 +2,12 @@
   "pages": {},
   "app": {
     "[project]/apps/web/src/app/projects/page": [
-      "static/media/06ba6ef833b337bc-s.p.0faac26c.woff2",
-      "static/media/4c650e1ac62b3415-s.p.a797655c.woff2",
-      "static/media/47ffe33d88a9769a-s.p.47b51c64.woff2",
-      "static/media/0a3c6a62758faac5-s.p.3ce64794.woff2",
-      "static/media/22826dd13ed2b3b2-s.p.8e314537.woff2",
-      "static/media/848ad03642e36ff8-s.p.abe84b19.woff2"
+      "static/media/83afe278b6a6bb3c-s.p.3a6ba036.woff2",
+      "static/media/ce62453a442c7f35-s.p.a9507876.woff2",
+      "static/media/cf514f5d0007dafa-s.p.e904ea14.woff2",
+      "static/media/2a65768255d6b625-s.p.82ff4263.woff2",
+      "static/media/edb82671f1e8f812-s.p.bef3c156.woff2",
+      "static/media/aee29876688b27b8-s.p.10f44886.woff2"
     ]
   },
   "appUsingSizeAdjust": true,
