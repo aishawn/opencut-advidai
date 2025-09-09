@@ -247,7 +247,8 @@ export const extractTimelineAudio = async (
     }
 
     const data = await ffmpeg.readFile(outputName);
-    const blob = new Blob([typeof data === 'string' ? new TextEncoder().encode(data) : new Uint8Array(data.buffer.slice(0))], { type: "audio/wav" });
+    const buffer = typeof data === 'string' ? new TextEncoder().encode(data) : data;
+    const blob = new Blob([buffer.buffer instanceof ArrayBuffer ? buffer : new Uint8Array(buffer.buffer.slice(0))], { type: "audio/wav" });
 
     return blob;
   } catch (error) {
@@ -295,7 +296,8 @@ const generateSilentAudio = async (durationSeconds: number): Promise<Blob> => {
     ]);
 
     const data = await ffmpeg.readFile(outputName);
-    const blob = new Blob([typeof data === 'string' ? new TextEncoder().encode(data) : new Uint8Array(data.buffer.slice(0))], { type: "audio/wav" });
+    const buffer = typeof data === 'string' ? new TextEncoder().encode(data) : data;
+    const blob = new Blob([buffer.buffer instanceof ArrayBuffer ? buffer : new Uint8Array(buffer.buffer.slice(0))], { type: "audio/wav" });
 
     return blob;
   } catch (error) {
