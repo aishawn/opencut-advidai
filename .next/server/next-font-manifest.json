@@ -1,5 +1,13 @@
 {
   "app": {
+    "[project]/apps/web/src/app/editor/[project_id]/page": [
+      "static/media/83afe278b6a6bb3c-s.p.3a6ba036.woff2",
+      "static/media/ce62453a442c7f35-s.p.a9507876.woff2",
+      "static/media/cf514f5d0007dafa-s.p.e904ea14.woff2",
+      "static/media/2a65768255d6b625-s.p.82ff4263.woff2",
+      "static/media/edb82671f1e8f812-s.p.bef3c156.woff2",
+      "static/media/aee29876688b27b8-s.p.10f44886.woff2"
+    ],
     "[project]/apps/web/src/app/page": [
       "static/media/83afe278b6a6bb3c-s.p.3a6ba036.woff2",
       "static/media/ce62453a442c7f35-s.p.a9507876.woff2",
@@ -9,6 +17,14 @@
       "static/media/aee29876688b27b8-s.p.10f44886.woff2"
     ],
     "[project]/apps/web/src/app/projects/page": [
+      "static/media/83afe278b6a6bb3c-s.p.3a6ba036.woff2",
+      "static/media/ce62453a442c7f35-s.p.a9507876.woff2",
+      "static/media/cf514f5d0007dafa-s.p.e904ea14.woff2",
+      "static/media/2a65768255d6b625-s.p.82ff4263.woff2",
+      "static/media/edb82671f1e8f812-s.p.bef3c156.woff2",
+      "static/media/aee29876688b27b8-s.p.10f44886.woff2"
+    ],
+    "[project]/apps/web/src/app/roadmap/page": [
       "static/media/83afe278b6a6bb3c-s.p.3a6ba036.woff2",
       "static/media/ce62453a442c7f35-s.p.a9507876.woff2",
       "static/media/cf514f5d0007dafa-s.p.e904ea14.woff2",

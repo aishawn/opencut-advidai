@@ -1,4 +1,6 @@
 {
+  "/editor/[project_id]/page": "app/editor/[project_id]/page.js",
   "/page": "app/page.js",
-  "/projects/page": "app/projects/page.js"
+  "/projects/page": "app/projects/page.js",
+  "/roadmap/page": "app/roadmap/page.js"
 }
