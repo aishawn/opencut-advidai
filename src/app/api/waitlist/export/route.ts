@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { baseRateLimit } from "@/lib/rate-limit";
-import { db, exportWaitlist, eq } from "@opencut/db";
+import { db, eq, exportWaitlist } from "@/lib/db";
 import { randomUUID } from "crypto";
 import {
   exportWaitlistSchema,

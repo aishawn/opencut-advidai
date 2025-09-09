@@ -34,7 +34,7 @@ ENV NEXT_PUBLIC_BETTER_AUTH_URL="http://localhost:3000"
 ENV FREESOUND_CLIENT_ID=$FREESOUND_CLIENT_ID
 ENV FREESOUND_API_KEY=$FREESOUND_API_KEY
 
-WORKDIR /app/apps/web
+WORKDIR /
 RUN bun run build
 
 # Production image
@@ -47,9 +47,9 @@ ENV NEXT_TELEMETRY_DISABLED 1
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
-COPY --from=builder --chown=nextjs:nodejs /app/apps/web/public ./apps/web/public
-COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/static ./apps/web/.next/static
+COPY --from=builder --chown=nextjs:nodejs /public ./apps/web/public
+COPY --from=builder --chown=nextjs:nodejs /.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /.next/static ./apps/web/.next/static
 
 RUN chown nextjs:nodejs apps
 
