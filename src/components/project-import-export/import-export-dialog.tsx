@@ -27,7 +27,6 @@ import { Download, Upload, FileText, AlertCircle, CheckCircle } from "lucide-rea
 import { 
   exportProjectToFile, 
   importProjectFromFile, 
-  validateProjectFile,
   type ProjectExportOptions,
   type ProjectImportOptions 
 } from "@/lib/project-storage";
@@ -133,32 +132,15 @@ export function ImportExportDialog({ mode, projectId, children }: ImportExportDi
       const file = fileInput.files[0];
       const arrayBuffer = await file.arrayBuffer();
       
-      // 验证文件
+      // 直接导入ZIP文件
       setProgress(20);
-      const validation = validateProjectFile(arrayBuffer);
-      
-      if (!validation.isValid) {
-        setError(`Invalid project file: ${validation.errors.join(", ")}`);
-        return;
-      }
-
-      setWarnings(validation.warnings);
-      setProgress(40);
-
-      // 设置默认项目名称
-      if (!importOptions.newProjectName && validation.metadata) {
-        setImportOptions(prev => ({
-          ...prev,
-          newProjectName: validation.metadata!.name
-        }));
-      }
 
       setProgress(60);
 
       // 导入项目
       const result = await importProjectFromFile(arrayBuffer, {
         ...importOptions,
-        newProjectName: importOptions.newProjectName || validation.metadata?.name || "Imported Project"
+        newProjectName: importOptions.newProjectName || file.name.replace('.zip', '')
       });
 
       setProgress(100);
@@ -229,8 +211,8 @@ export function ImportExportDialog({ mode, projectId, children }: ImportExportDi
           </DialogTitle>
           <DialogDescription>
             {mode === "import" 
-              ? "Import a project from a .opencut file"
-              : "Export your project to a .opencut file for backup or sharing"
+              ? "Import a project from a .zip package"
+              : "Export your project as a .zip package for backup or sharing"
             }
           </DialogDescription>
         </DialogHeader>
@@ -243,12 +225,12 @@ export function ImportExportDialog({ mode, projectId, children }: ImportExportDi
                 <Input
                   id="file-input"
                   type="file"
-                  accept=".opencut"
+                  accept=".zip"
                   ref={fileInputRef}
                   onChange={() => setError(null)}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Select a .opencut project file to import
+                  Select a .zip project package to import
                 </p>
               </div>
 
@@ -265,33 +247,6 @@ export function ImportExportDialog({ mode, projectId, children }: ImportExportDi
                 />
               </div>
 
-              <div className="space-y-3">
-                <Label>Import Options</Label>
-                <div className="space-y-2">
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
-                      id="include-media"
-                      checked={importOptions.includeMediaFiles}
-                      onCheckedChange={(checked) => setImportOptions((prev: ProjectImportOptions) => ({
-                        ...prev,
-                        includeMediaFiles: checked as boolean
-                      }))}
-                    />
-                    <Label htmlFor="include-media">Include media files</Label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
-                      id="include-timeline"
-                      checked={importOptions.includeTimeline}
-                      onCheckedChange={(checked) => setImportOptions((prev: ProjectImportOptions) => ({
-                        ...prev,
-                        includeTimeline: checked as boolean
-                      }))}
-                    />
-                    <Label htmlFor="include-timeline">Include timeline</Label>
-                  </div>
-                </div>
-              </div>
             </>
           ) : (
             <>
@@ -333,6 +288,7 @@ export function ImportExportDialog({ mode, projectId, children }: ImportExportDi
                   </div>
                 </div>
               </div>
+
 
               <div className="space-y-2">
                 <Label htmlFor="quality">Media Quality</Label>

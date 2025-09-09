@@ -28,7 +28,6 @@ import {
 import { 
   exportProjectToFile, 
   importProjectFromFile, 
-  validateProjectFile,
   type ProjectExportOptions,
   type ProjectImportOptions 
 } from "@/lib/project-storage";
@@ -124,7 +123,7 @@ export function BulkImportExport({ selectedProjects, onComplete, children }: Bul
             const url = URL.createObjectURL(blob);
             const a = document.createElement("a");
             a.href = url;
-            a.download = result.fileName || `${project.name}.opencut`;
+            a.download = result.fileName || `${project.name}.zip`;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
@@ -197,27 +196,15 @@ export function BulkImportExport({ selectedProjects, onComplete, children }: Bul
         try {
           const arrayBuffer = await file.arrayBuffer();
           
-          // 验证文件
-          const validation = validateProjectFile(arrayBuffer);
-          if (!validation.isValid) {
-            results.push({
-              projectId: "",
-              projectName: file.name,
-              success: false,
-              error: `Invalid file: ${validation.errors.join(", ")}`
-            });
-            continue;
-          }
-
-          // 导入项目
+          // 导入项目（现在只支持ZIP格式）
           const result = await importProjectFromFile(arrayBuffer, {
             ...importOptions,
-            newProjectName: importOptions.newProjectName || validation.metadata?.name || file.name.replace('.opencut', '')
+            newProjectName: importOptions.newProjectName || file.name.replace('.zip', '')
           });
 
           results.push({
             projectId: result.projectId || "",
-            projectName: validation.metadata?.name || file.name,
+            projectName: file.name.replace('.zip', ''),
             success: result.success,
             error: result.error
           });
@@ -307,8 +294,8 @@ export function BulkImportExport({ selectedProjects, onComplete, children }: Bul
           </DialogTitle>
           <DialogDescription>
             {mode === "import" 
-              ? `Import multiple projects from .opencut files (${selectedProjects.length} selected)`
-              : `Export ${selectedProjects.length} selected projects to .opencut files`
+              ? `Import multiple projects from .zip files (${selectedProjects.length} selected)`
+              : `Export ${selectedProjects.length} selected projects to .zip files`
             }
           </DialogDescription>
         </DialogHeader>
@@ -343,13 +330,13 @@ export function BulkImportExport({ selectedProjects, onComplete, children }: Bul
                 <Input
                   id="bulk-file-input"
                   type="file"
-                  accept=".opencut"
+                  accept=".zip"
                   multiple
                   ref={fileInputRef}
                   onChange={() => setError(null)}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Select multiple .opencut project files to import
+                  Select multiple .zip project files to import
                 </p>
               </div>
 
@@ -366,33 +353,7 @@ export function BulkImportExport({ selectedProjects, onComplete, children }: Bul
                 />
               </div>
 
-              <div className="space-y-3">
-                <Label>Import Options</Label>
-                <div className="space-y-2">
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
-                      id="bulk-include-media"
-                      checked={importOptions.includeMediaFiles}
-                      onCheckedChange={(checked) => setImportOptions(prev => ({
-                        ...prev,
-                        includeMediaFiles: checked as boolean
-                      }))}
-                    />
-                    <Label htmlFor="bulk-include-media">Include media files</Label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
-                      id="bulk-include-timeline"
-                      checked={importOptions.includeTimeline}
-                      onCheckedChange={(checked) => setImportOptions(prev => ({
-                        ...prev,
-                        includeTimeline: checked as boolean
-                      }))}
-                    />
-                    <Label htmlFor="bulk-include-timeline">Include timeline</Label>
-                  </div>
-                </div>
-              </div>
+
             </>
           ) : (
             <>

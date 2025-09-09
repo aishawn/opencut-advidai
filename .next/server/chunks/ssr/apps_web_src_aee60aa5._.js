@@ -803,8 +803,7 @@ async function exportProjectToFile(projectId, options = {
     includeTimeline: true,
     compressMediaFiles: false,
     quality: "high",
-    generateThumbnail: true,
-    exportFormat: "zip"
+    generateThumbnail: true
 }) {
     try {
         const projectStore = __TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$stores$2f$project$2d$store$2e$ts__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["useProjectStore"].getState();
@@ -867,12 +866,8 @@ async function exportProjectToFile(projectId, options = {
             createdAt: new Date().toISOString(),
             exportedBy: "OpenCut"
         };
-        // 根据导出格式选择处理方式
-        if (options.exportFormat === "zip") {
-            return await exportProjectAsZip(project, storageFile, mediaFiles, options);
-        } else {
-            return await exportProjectAsSingleFile(project, storageFile, options);
-        }
+        // 直接导出为ZIP格式
+        return await exportProjectAsZip(project, storageFile, mediaFiles, options);
     } catch (error) {
         console.error("Export project failed:", error);
         return {
@@ -880,23 +875,6 @@ async function exportProjectToFile(projectId, options = {
             error: error instanceof Error ? error.message : "Unknown error"
         };
     }
-}
-// 导出为单个.opencut文件
-async function exportProjectAsSingleFile(project, storageFile, options) {
-    // 转换为JSON
-    const jsonString = JSON.stringify(storageFile, null, 2);
-    const fileData = new TextEncoder().encode(jsonString);
-    const arrayBuffer = new ArrayBuffer(fileData.length);
-    const uint8Array = new Uint8Array(arrayBuffer);
-    uint8Array.set(fileData);
-    // 生成文件名
-    const fileName = `${project.name.replace(/[^a-zA-Z0-9]/g, "_")}_${new Date().toISOString().split("T")[0]}.opencut`;
-    return {
-        success: true,
-        fileData: arrayBuffer,
-        fileName,
-        fileSize: fileData.length
-    };
 }
 // 导出为压缩包格式
 async function exportProjectAsZip(project, storageFile, mediaFiles, options) {
@@ -961,24 +939,133 @@ function getFileExtension(fileName) {
     const lastDot = fileName.lastIndexOf('.');
     return lastDot !== -1 ? fileName.substring(lastDot) : '';
 }
+// 从ZIP文件导入项目
+async function importProjectFromZip(fileData, options) {
+    try {
+        const JSZip = (await __turbopack_context__.r("[project]/node_modules/.bun/jszip@3.10.1/node_modules/jszip/lib/index.js [app-ssr] (ecmascript, async loader)")(__turbopack_context__.i)).default;
+        const zip = await JSZip.loadAsync(fileData);
+        // 1. 读取项目文件
+        const projectFile = zip.file("project.opencut");
+        if (!projectFile) {
+            return {
+                success: false,
+                error: "Project file not found in ZIP archive"
+            };
+        }
+        const projectContent = await projectFile.async("text");
+        const storageFile = JSON.parse(projectContent);
+        // 2. 读取媒体文件
+        const mediaFiles = [];
+        if (options.includeMediaFiles) {
+            const mediaFolder = zip.folder("media");
+            if (mediaFolder) {
+                const mediaFilesPromises = Object.keys(mediaFolder.files).map(async (fileName)=>{
+                    const file = mediaFolder.files[fileName];
+                    if (!file.dir) {
+                        try {
+                            const arrayBuffer = await file.async("arraybuffer");
+                            const blob = new Blob([
+                                arrayBuffer
+                            ]);
+                            const fileObj = new File([
+                                blob
+                            ], fileName, {
+                                type: getMimeTypeFromExtension(fileName)
+                            });
+                            // 从文件名提取媒体ID
+                            const mediaId = fileName.substring(0, fileName.lastIndexOf('.'));
+                            return {
+                                id: mediaId,
+                                name: fileName,
+                                type: getFileTypeFromExtension(fileName),
+                                file: fileObj,
+                                url: URL.createObjectURL(blob)
+                            };
+                        } catch (error) {
+                            console.warn(`Failed to process media file ${fileName}:`, error);
+                            return null;
+                        }
+                    }
+                    return null;
+                });
+                const results = await Promise.all(mediaFilesPromises);
+                mediaFiles.push(...results.filter((file)=>file !== null));
+            }
+        }
+        return {
+            success: true,
+            storageFile,
+            mediaFiles
+        };
+    } catch (error) {
+        console.error("Failed to import project from ZIP:", error);
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : "Unknown error"
+        };
+    }
+}
+// 根据文件扩展名获取MIME类型
+function getMimeTypeFromExtension(fileName) {
+    const extension = getFileExtension(fileName).toLowerCase();
+    const mimeTypes = {
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.mp4': 'video/mp4',
+        '.webm': 'video/webm',
+        '.avi': 'video/x-msvideo',
+        '.mov': 'video/quicktime',
+        '.mp3': 'audio/mpeg',
+        '.wav': 'audio/wav',
+        '.ogg': 'audio/ogg',
+        '.aac': 'audio/aac'
+    };
+    return mimeTypes[extension] || 'application/octet-stream';
+}
+// 根据文件扩展名获取文件类型
+function getFileTypeFromExtension(fileName) {
+    const extension = getFileExtension(fileName).toLowerCase();
+    if ([
+        '.jpg',
+        '.jpeg',
+        '.png',
+        '.gif',
+        '.webp'
+    ].includes(extension)) {
+        return 'image';
+    } else if ([
+        '.mp4',
+        '.webm',
+        '.avi',
+        '.mov'
+    ].includes(extension)) {
+        return 'video';
+    } else if ([
+        '.mp3',
+        '.wav',
+        '.ogg',
+        '.aac'
+    ].includes(extension)) {
+        return 'audio';
+    }
+    return 'image'; // 默认类型
+}
 async function importProjectFromFile(fileData, options = {
     includeMediaFiles: true,
     includeTimeline: true,
     mergeWithExisting: false
 }) {
     try {
-        // 验证文件
-        const validation = validateProjectFile(fileData);
-        if (!validation.isValid) {
-            return {
-                success: false,
-                error: `Invalid project file: ${validation.errors.join(", ")}`,
-                warnings: validation.warnings
-            };
+        // 只支持ZIP格式
+        const result = await importProjectFromZip(fileData, options);
+        if (!result.success) {
+            return result;
         }
-        // 解析文件数据
-        const text = new TextDecoder().decode(fileData);
-        const storageFile = JSON.parse(text);
+        const storageFile = result.storageFile;
+        const mediaFiles = result.mediaFiles || [];
         const projectStore = __TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$stores$2f$project$2d$store$2e$ts__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["useProjectStore"].getState();
         const mediaStore = __TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$stores$2f$media$2d$store$2e$ts__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["useMediaStore"].getState();
         const timelineStore = __TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$stores$2f$timeline$2d$store$2e$ts__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["useTimelineStore"].getState();
@@ -1012,7 +1099,6 @@ async function importProjectFromFile(fileData, options = {
         return {
             success: true,
             projectId: newProjectId,
-            warnings: validation.warnings,
             importedMediaCount,
             importedTracksCount
         };
@@ -1355,27 +1441,13 @@ function ImportExportDialog({ mode, projectId, children }) {
         try {
             const file = fileInput.files[0];
             const arrayBuffer = await file.arrayBuffer();
-            // 验证文件
+            // 直接导入ZIP文件
             setProgress(20);
-            const validation = (0, __TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$lib$2f$project$2d$storage$2e$ts__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["validateProjectFile"])(arrayBuffer);
-            if (!validation.isValid) {
-                setError(`Invalid project file: ${validation.errors.join(", ")}`);
-                return;
-            }
-            setWarnings(validation.warnings);
-            setProgress(40);
-            // 设置默认项目名称
-            if (!importOptions.newProjectName && validation.metadata) {
-                setImportOptions((prev)=>({
-                        ...prev,
-                        newProjectName: validation.metadata.name
-                    }));
-            }
             setProgress(60);
             // 导入项目
             const result = await (0, __TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$lib$2f$project$2d$storage$2e$ts__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["importProjectFromFile"])(arrayBuffer, {
                 ...importOptions,
-                newProjectName: importOptions.newProjectName || validation.metadata?.name || "Imported Project"
+                newProjectName: importOptions.newProjectName || file.name.replace('.zip', '')
             });
             setProgress(100);
             if (result.success && result.projectId) {
@@ -1431,7 +1503,7 @@ function ImportExportDialog({ mode, projectId, children }) {
                 children: children
             }, void 0, false, {
                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                lineNumber: 212,
+                lineNumber: 194,
                 columnNumber: 7
             }, this),
             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$dialog$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["DialogContent"], {
@@ -1447,7 +1519,7 @@ function ImportExportDialog({ mode, projectId, children }) {
                                             className: "h-5 w-5"
                                         }, void 0, false, {
                                             fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                            lineNumber: 220,
+                                            lineNumber: 202,
                                             columnNumber: 17
                                         }, this),
                                         "Import Project"
@@ -1458,7 +1530,7 @@ function ImportExportDialog({ mode, projectId, children }) {
                                             className: "h-5 w-5"
                                         }, void 0, false, {
                                             fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                            lineNumber: 225,
+                                            lineNumber: 207,
                                             columnNumber: 17
                                         }, this),
                                         "Export Project"
@@ -1466,20 +1538,20 @@ function ImportExportDialog({ mode, projectId, children }) {
                                 }, void 0, true)
                             }, void 0, false, {
                                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                lineNumber: 217,
+                                lineNumber: 199,
                                 columnNumber: 11
                             }, this),
                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$dialog$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["DialogDescription"], {
-                                children: mode === "import" ? "Import a project from a .opencut file" : "Export your project to a .opencut file for backup or sharing"
+                                children: mode === "import" ? "Import a project from a .zip package" : "Export your project as a .zip package for backup or sharing"
                             }, void 0, false, {
                                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                lineNumber: 230,
+                                lineNumber: 212,
                                 columnNumber: 11
                             }, this)
                         ]
                     }, void 0, true, {
                         fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                        lineNumber: 216,
+                        lineNumber: 198,
                         columnNumber: 9
                     }, this),
                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -1495,32 +1567,32 @@ function ImportExportDialog({ mode, projectId, children }) {
                                                 children: "Project File"
                                             }, void 0, false, {
                                                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                lineNumber: 242,
+                                                lineNumber: 224,
                                                 columnNumber: 17
                                             }, this),
                                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$input$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Input"], {
                                                 id: "file-input",
                                                 type: "file",
-                                                accept: ".opencut",
+                                                accept: ".zip",
                                                 ref: fileInputRef,
                                                 onChange: ()=>setError(null)
                                             }, void 0, false, {
                                                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                lineNumber: 243,
+                                                lineNumber: 225,
                                                 columnNumber: 17
                                             }, this),
                                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
                                                 className: "text-xs text-muted-foreground",
-                                                children: "Select a .opencut project file to import"
+                                                children: "Select a .zip project package to import"
                                             }, void 0, false, {
                                                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                lineNumber: 250,
+                                                lineNumber: 232,
                                                 columnNumber: 17
                                             }, this)
                                         ]
                                     }, void 0, true, {
                                         fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                        lineNumber: 241,
+                                        lineNumber: 223,
                                         columnNumber: 15
                                     }, this),
                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -1531,7 +1603,7 @@ function ImportExportDialog({ mode, projectId, children }) {
                                                 children: "Project Name"
                                             }, void 0, false, {
                                                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                lineNumber: 256,
+                                                lineNumber: 238,
                                                 columnNumber: 17
                                             }, this),
                                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$input$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Input"], {
@@ -1544,96 +1616,13 @@ function ImportExportDialog({ mode, projectId, children }) {
                                                         }))
                                             }, void 0, false, {
                                                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                lineNumber: 257,
+                                                lineNumber: 239,
                                                 columnNumber: 17
                                             }, this)
                                         ]
                                     }, void 0, true, {
                                         fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                        lineNumber: 255,
-                                        columnNumber: 15
-                                    }, this),
-                                    /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                                        className: "space-y-3",
-                                        children: [
-                                            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$label$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Label"], {
-                                                children: "Import Options"
-                                            }, void 0, false, {
-                                                fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                lineNumber: 269,
-                                                columnNumber: 17
-                                            }, this),
-                                            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                                                className: "space-y-2",
-                                                children: [
-                                                    /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                                                        className: "flex items-center space-x-2",
-                                                        children: [
-                                                            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$checkbox$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Checkbox"], {
-                                                                id: "include-media",
-                                                                checked: importOptions.includeMediaFiles,
-                                                                onCheckedChange: (checked)=>setImportOptions((prev)=>({
-                                                                            ...prev,
-                                                                            includeMediaFiles: checked
-                                                                        }))
-                                                            }, void 0, false, {
-                                                                fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                                lineNumber: 272,
-                                                                columnNumber: 21
-                                                            }, this),
-                                                            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$label$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Label"], {
-                                                                htmlFor: "include-media",
-                                                                children: "Include media files"
-                                                            }, void 0, false, {
-                                                                fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                                lineNumber: 280,
-                                                                columnNumber: 21
-                                                            }, this)
-                                                        ]
-                                                    }, void 0, true, {
-                                                        fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                        lineNumber: 271,
-                                                        columnNumber: 19
-                                                    }, this),
-                                                    /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                                                        className: "flex items-center space-x-2",
-                                                        children: [
-                                                            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$checkbox$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Checkbox"], {
-                                                                id: "include-timeline",
-                                                                checked: importOptions.includeTimeline,
-                                                                onCheckedChange: (checked)=>setImportOptions((prev)=>({
-                                                                            ...prev,
-                                                                            includeTimeline: checked
-                                                                        }))
-                                                            }, void 0, false, {
-                                                                fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                                lineNumber: 283,
-                                                                columnNumber: 21
-                                                            }, this),
-                                                            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$label$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Label"], {
-                                                                htmlFor: "include-timeline",
-                                                                children: "Include timeline"
-                                                            }, void 0, false, {
-                                                                fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                                lineNumber: 291,
-                                                                columnNumber: 21
-                                                            }, this)
-                                                        ]
-                                                    }, void 0, true, {
-                                                        fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                        lineNumber: 282,
-                                                        columnNumber: 19
-                                                    }, this)
-                                                ]
-                                            }, void 0, true, {
-                                                fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                lineNumber: 270,
-                                                columnNumber: 17
-                                            }, this)
-                                        ]
-                                    }, void 0, true, {
-                                        fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                        lineNumber: 268,
+                                        lineNumber: 237,
                                         columnNumber: 15
                                     }, this)
                                 ]
@@ -1646,7 +1635,7 @@ function ImportExportDialog({ mode, projectId, children }) {
                                                 children: "Export Options"
                                             }, void 0, false, {
                                                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                lineNumber: 299,
+                                                lineNumber: 254,
                                                 columnNumber: 17
                                             }, this),
                                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -1664,7 +1653,7 @@ function ImportExportDialog({ mode, projectId, children }) {
                                                                         }))
                                                             }, void 0, false, {
                                                                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                                lineNumber: 302,
+                                                                lineNumber: 257,
                                                                 columnNumber: 21
                                                             }, this),
                                                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$label$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Label"], {
@@ -1672,13 +1661,13 @@ function ImportExportDialog({ mode, projectId, children }) {
                                                                 children: "Include media files"
                                                             }, void 0, false, {
                                                                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                                lineNumber: 310,
+                                                                lineNumber: 265,
                                                                 columnNumber: 21
                                                             }, this)
                                                         ]
                                                     }, void 0, true, {
                                                         fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                        lineNumber: 301,
+                                                        lineNumber: 256,
                                                         columnNumber: 19
                                                     }, this),
                                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -1693,7 +1682,7 @@ function ImportExportDialog({ mode, projectId, children }) {
                                                                         }))
                                                             }, void 0, false, {
                                                                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                                lineNumber: 313,
+                                                                lineNumber: 268,
                                                                 columnNumber: 21
                                                             }, this),
                                                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$label$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Label"], {
@@ -1701,13 +1690,13 @@ function ImportExportDialog({ mode, projectId, children }) {
                                                                 children: "Include timeline"
                                                             }, void 0, false, {
                                                                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                                lineNumber: 321,
+                                                                lineNumber: 276,
                                                                 columnNumber: 21
                                                             }, this)
                                                         ]
                                                     }, void 0, true, {
                                                         fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                        lineNumber: 312,
+                                                        lineNumber: 267,
                                                         columnNumber: 19
                                                     }, this),
                                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -1722,7 +1711,7 @@ function ImportExportDialog({ mode, projectId, children }) {
                                                                         }))
                                                             }, void 0, false, {
                                                                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                                lineNumber: 324,
+                                                                lineNumber: 279,
                                                                 columnNumber: 21
                                                             }, this),
                                                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$label$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Label"], {
@@ -1730,25 +1719,25 @@ function ImportExportDialog({ mode, projectId, children }) {
                                                                 children: "Generate thumbnail"
                                                             }, void 0, false, {
                                                                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                                lineNumber: 332,
+                                                                lineNumber: 287,
                                                                 columnNumber: 21
                                                             }, this)
                                                         ]
                                                     }, void 0, true, {
                                                         fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                        lineNumber: 323,
+                                                        lineNumber: 278,
                                                         columnNumber: 19
                                                     }, this)
                                                 ]
                                             }, void 0, true, {
                                                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                lineNumber: 300,
+                                                lineNumber: 255,
                                                 columnNumber: 17
                                             }, this)
                                         ]
                                     }, void 0, true, {
                                         fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                        lineNumber: 298,
+                                        lineNumber: 253,
                                         columnNumber: 15
                                     }, this),
                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -1759,7 +1748,7 @@ function ImportExportDialog({ mode, projectId, children }) {
                                                 children: "Media Quality"
                                             }, void 0, false, {
                                                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                lineNumber: 338,
+                                                lineNumber: 294,
                                                 columnNumber: 17
                                             }, this),
                                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$select$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Select"], {
@@ -1772,12 +1761,12 @@ function ImportExportDialog({ mode, projectId, children }) {
                                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$select$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["SelectTrigger"], {
                                                         children: /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$select$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["SelectValue"], {}, void 0, false, {
                                                             fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                            lineNumber: 346,
+                                                            lineNumber: 302,
                                                             columnNumber: 21
                                                         }, this)
                                                     }, void 0, false, {
                                                         fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                        lineNumber: 345,
+                                                        lineNumber: 301,
                                                         columnNumber: 19
                                                     }, this),
                                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$select$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["SelectContent"], {
@@ -1787,7 +1776,7 @@ function ImportExportDialog({ mode, projectId, children }) {
                                                                 children: "Low (Smaller file)"
                                                             }, void 0, false, {
                                                                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                                lineNumber: 349,
+                                                                lineNumber: 305,
                                                                 columnNumber: 21
                                                             }, this),
                                                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$select$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["SelectItem"], {
@@ -1795,7 +1784,7 @@ function ImportExportDialog({ mode, projectId, children }) {
                                                                 children: "Medium (Balanced)"
                                                             }, void 0, false, {
                                                                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                                lineNumber: 350,
+                                                                lineNumber: 306,
                                                                 columnNumber: 21
                                                             }, this),
                                                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$select$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["SelectItem"], {
@@ -1803,25 +1792,25 @@ function ImportExportDialog({ mode, projectId, children }) {
                                                                 children: "High (Best quality)"
                                                             }, void 0, false, {
                                                                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                                lineNumber: 351,
+                                                                lineNumber: 307,
                                                                 columnNumber: 21
                                                             }, this)
                                                         ]
                                                     }, void 0, true, {
                                                         fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                        lineNumber: 348,
+                                                        lineNumber: 304,
                                                         columnNumber: 19
                                                     }, this)
                                                 ]
                                             }, void 0, true, {
                                                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                lineNumber: 339,
+                                                lineNumber: 295,
                                                 columnNumber: 17
                                             }, this)
                                         ]
                                     }, void 0, true, {
                                         fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                        lineNumber: 337,
+                                        lineNumber: 293,
                                         columnNumber: 15
                                     }, this)
                                 ]
@@ -1834,7 +1823,7 @@ function ImportExportDialog({ mode, projectId, children }) {
                                         className: "w-full"
                                     }, void 0, false, {
                                         fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                        lineNumber: 360,
+                                        lineNumber: 316,
                                         columnNumber: 15
                                     }, this),
                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
@@ -1847,13 +1836,13 @@ function ImportExportDialog({ mode, projectId, children }) {
                                         ]
                                     }, void 0, true, {
                                         fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                        lineNumber: 361,
+                                        lineNumber: 317,
                                         columnNumber: 15
                                     }, this)
                                 ]
                             }, void 0, true, {
                                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                lineNumber: 359,
+                                lineNumber: 315,
                                 columnNumber: 13
                             }, this),
                             error && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$alert$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Alert"], {
@@ -1863,20 +1852,20 @@ function ImportExportDialog({ mode, projectId, children }) {
                                         className: "h-4 w-4"
                                     }, void 0, false, {
                                         fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                        lineNumber: 369,
+                                        lineNumber: 325,
                                         columnNumber: 15
                                     }, this),
                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$alert$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["AlertDescription"], {
                                         children: error
                                     }, void 0, false, {
                                         fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                        lineNumber: 370,
+                                        lineNumber: 326,
                                         columnNumber: 15
                                     }, this)
                                 ]
                             }, void 0, true, {
                                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                lineNumber: 368,
+                                lineNumber: 324,
                                 columnNumber: 13
                             }, this),
                             success && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$alert$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Alert"], {
@@ -1885,20 +1874,20 @@ function ImportExportDialog({ mode, projectId, children }) {
                                         className: "h-4 w-4"
                                     }, void 0, false, {
                                         fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                        lineNumber: 376,
+                                        lineNumber: 332,
                                         columnNumber: 15
                                     }, this),
                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$alert$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["AlertDescription"], {
                                         children: success
                                     }, void 0, false, {
                                         fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                        lineNumber: 377,
+                                        lineNumber: 333,
                                         columnNumber: 15
                                     }, this)
                                 ]
                             }, void 0, true, {
                                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                lineNumber: 375,
+                                lineNumber: 331,
                                 columnNumber: 13
                             }, this),
                             warnings.length > 0 && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$alert$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Alert"], {
@@ -1907,7 +1896,7 @@ function ImportExportDialog({ mode, projectId, children }) {
                                         className: "h-4 w-4"
                                     }, void 0, false, {
                                         fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                        lineNumber: 383,
+                                        lineNumber: 339,
                                         columnNumber: 15
                                     }, this),
                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$alert$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["AlertDescription"], {
@@ -1919,7 +1908,7 @@ function ImportExportDialog({ mode, projectId, children }) {
                                                     children: "Warnings:"
                                                 }, void 0, false, {
                                                     fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                    lineNumber: 386,
+                                                    lineNumber: 342,
                                                     columnNumber: 19
                                                 }, this),
                                                 /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("ul", {
@@ -1929,35 +1918,35 @@ function ImportExportDialog({ mode, projectId, children }) {
                                                             children: warning
                                                         }, index, false, {
                                                             fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                            lineNumber: 389,
+                                                            lineNumber: 345,
                                                             columnNumber: 23
                                                         }, this))
                                                 }, void 0, false, {
                                                     fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                    lineNumber: 387,
+                                                    lineNumber: 343,
                                                     columnNumber: 19
                                                 }, this)
                                             ]
                                         }, void 0, true, {
                                             fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                            lineNumber: 385,
+                                            lineNumber: 341,
                                             columnNumber: 17
                                         }, this)
                                     }, void 0, false, {
                                         fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                        lineNumber: 384,
+                                        lineNumber: 340,
                                         columnNumber: 15
                                     }, this)
                                 ]
                             }, void 0, true, {
                                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                lineNumber: 382,
+                                lineNumber: 338,
                                 columnNumber: 13
                             }, this)
                         ]
                     }, void 0, true, {
                         fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                        lineNumber: 238,
+                        lineNumber: 220,
                         columnNumber: 9
                     }, this),
                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$dialog$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["DialogFooter"], {
@@ -1969,7 +1958,7 @@ function ImportExportDialog({ mode, projectId, children }) {
                                 children: "Cancel"
                             }, void 0, false, {
                                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                lineNumber: 399,
+                                lineNumber: 355,
                                 columnNumber: 11
                             }, this),
                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$button$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Button"], {
@@ -1981,7 +1970,7 @@ function ImportExportDialog({ mode, projectId, children }) {
                                             className: "h-4 w-4 mr-2 animate-spin"
                                         }, void 0, false, {
                                             fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                            lineNumber: 412,
+                                            lineNumber: 368,
                                             columnNumber: 17
                                         }, this),
                                         mode === "import" ? "Importing..." : "Exporting..."
@@ -1993,7 +1982,7 @@ function ImportExportDialog({ mode, projectId, children }) {
                                                 className: "h-4 w-4 mr-2"
                                             }, void 0, false, {
                                                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                lineNumber: 419,
+                                                lineNumber: 375,
                                                 columnNumber: 21
                                             }, this),
                                             "Import"
@@ -2004,7 +1993,7 @@ function ImportExportDialog({ mode, projectId, children }) {
                                                 className: "h-4 w-4 mr-2"
                                             }, void 0, false, {
                                                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                                lineNumber: 424,
+                                                lineNumber: 380,
                                                 columnNumber: 21
                                             }, this),
                                             "Export"
@@ -2013,25 +2002,25 @@ function ImportExportDialog({ mode, projectId, children }) {
                                 }, void 0, false)
                             }, void 0, false, {
                                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                                lineNumber: 406,
+                                lineNumber: 362,
                                 columnNumber: 11
                             }, this)
                         ]
                     }, void 0, true, {
                         fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                        lineNumber: 398,
+                        lineNumber: 354,
                         columnNumber: 9
                     }, this)
                 ]
             }, void 0, true, {
                 fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-                lineNumber: 215,
+                lineNumber: 197,
                 columnNumber: 7
             }, this)
         ]
     }, void 0, true, {
         fileName: "[project]/apps/web/src/components/project-import-export/import-export-dialog.tsx",
-        lineNumber: 211,
+        lineNumber: 193,
         columnNumber: 5
     }, this);
 }
@@ -2219,7 +2208,7 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                         const url = URL.createObjectURL(blob);
                         const a = document.createElement("a");
                         a.href = url;
-                        a.download = result.fileName || `${project.name}.opencut`;
+                        a.download = result.fileName || `${project.name}.zip`;
                         document.body.appendChild(a);
                         a.click();
                         document.body.removeChild(a);
@@ -2277,25 +2266,14 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                 setProgress(i / files.length * 100);
                 try {
                     const arrayBuffer = await file.arrayBuffer();
-                    // 验证文件
-                    const validation = (0, __TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$lib$2f$project$2d$storage$2e$ts__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["validateProjectFile"])(arrayBuffer);
-                    if (!validation.isValid) {
-                        results.push({
-                            projectId: "",
-                            projectName: file.name,
-                            success: false,
-                            error: `Invalid file: ${validation.errors.join(", ")}`
-                        });
-                        continue;
-                    }
-                    // 导入项目
+                    // 导入项目（现在只支持ZIP格式）
                     const result = await (0, __TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$lib$2f$project$2d$storage$2e$ts__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["importProjectFromFile"])(arrayBuffer, {
                         ...importOptions,
-                        newProjectName: importOptions.newProjectName || validation.metadata?.name || file.name.replace('.opencut', '')
+                        newProjectName: importOptions.newProjectName || file.name.replace('.zip', '')
                     });
                     results.push({
                         projectId: result.projectId || "",
-                        projectName: validation.metadata?.name || file.name,
+                        projectName: file.name.replace('.zip', ''),
                         success: result.success,
                         error: result.error
                     });
@@ -2367,7 +2345,7 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                 children: children
             }, void 0, false, {
                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                lineNumber: 290,
+                lineNumber: 277,
                 columnNumber: 7
             }, this),
             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$dialog$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["DialogContent"], {
@@ -2383,7 +2361,7 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                             className: "h-5 w-5"
                                         }, void 0, false, {
                                             fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                            lineNumber: 298,
+                                            lineNumber: 285,
                                             columnNumber: 17
                                         }, this),
                                         "Bulk Import Projects"
@@ -2394,7 +2372,7 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                             className: "h-5 w-5"
                                         }, void 0, false, {
                                             fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                            lineNumber: 303,
+                                            lineNumber: 290,
                                             columnNumber: 17
                                         }, this),
                                         "Bulk Export Projects"
@@ -2402,20 +2380,20 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                 }, void 0, true)
                             }, void 0, false, {
                                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                lineNumber: 295,
+                                lineNumber: 282,
                                 columnNumber: 11
                             }, this),
                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$dialog$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["DialogDescription"], {
-                                children: mode === "import" ? `Import multiple projects from .opencut files (${selectedProjects.length} selected)` : `Export ${selectedProjects.length} selected projects to .opencut files`
+                                children: mode === "import" ? `Import multiple projects from .zip files (${selectedProjects.length} selected)` : `Export ${selectedProjects.length} selected projects to .zip files`
                             }, void 0, false, {
                                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                lineNumber: 308,
+                                lineNumber: 295,
                                 columnNumber: 11
                             }, this)
                         ]
                     }, void 0, true, {
                         fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                        lineNumber: 294,
+                        lineNumber: 281,
                         columnNumber: 9
                     }, this),
                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -2434,7 +2412,7 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                                 className: "h-4 w-4 mr-2"
                                             }, void 0, false, {
                                                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                lineNumber: 325,
+                                                lineNumber: 312,
                                                 columnNumber: 15
                                             }, this),
                                             "Export (",
@@ -2443,7 +2421,7 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                         ]
                                     }, void 0, true, {
                                         fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                        lineNumber: 319,
+                                        lineNumber: 306,
                                         columnNumber: 13
                                     }, this),
                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$button$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Button"], {
@@ -2456,20 +2434,20 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                                 className: "h-4 w-4 mr-2"
                                             }, void 0, false, {
                                                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                lineNumber: 334,
+                                                lineNumber: 321,
                                                 columnNumber: 15
                                             }, this),
                                             "Import"
                                         ]
                                     }, void 0, true, {
                                         fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                        lineNumber: 328,
+                                        lineNumber: 315,
                                         columnNumber: 13
                                     }, this)
                                 ]
                             }, void 0, true, {
                                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                lineNumber: 318,
+                                lineNumber: 305,
                                 columnNumber: 11
                             }, this),
                             mode === "import" ? /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Fragment"], {
@@ -2482,33 +2460,33 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                                 children: "Project Files"
                                             }, void 0, false, {
                                                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                lineNumber: 342,
+                                                lineNumber: 329,
                                                 columnNumber: 17
                                             }, this),
                                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$input$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Input"], {
                                                 id: "bulk-file-input",
                                                 type: "file",
-                                                accept: ".opencut",
+                                                accept: ".zip",
                                                 multiple: true,
                                                 ref: fileInputRef,
                                                 onChange: ()=>setError(null)
                                             }, void 0, false, {
                                                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                lineNumber: 343,
+                                                lineNumber: 330,
                                                 columnNumber: 17
                                             }, this),
                                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
                                                 className: "text-xs text-muted-foreground",
-                                                children: "Select multiple .opencut project files to import"
+                                                children: "Select multiple .zip project files to import"
                                             }, void 0, false, {
                                                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                lineNumber: 351,
+                                                lineNumber: 338,
                                                 columnNumber: 17
                                             }, this)
                                         ]
                                     }, void 0, true, {
                                         fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                        lineNumber: 341,
+                                        lineNumber: 328,
                                         columnNumber: 15
                                     }, this),
                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -2519,7 +2497,7 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                                 children: "Default Project Name"
                                             }, void 0, false, {
                                                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                lineNumber: 357,
+                                                lineNumber: 344,
                                                 columnNumber: 17
                                             }, this),
                                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$input$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Input"], {
@@ -2532,96 +2510,13 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                                         }))
                                             }, void 0, false, {
                                                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                lineNumber: 358,
+                                                lineNumber: 345,
                                                 columnNumber: 17
                                             }, this)
                                         ]
                                     }, void 0, true, {
                                         fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                        lineNumber: 356,
-                                        columnNumber: 15
-                                    }, this),
-                                    /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                                        className: "space-y-3",
-                                        children: [
-                                            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$label$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Label"], {
-                                                children: "Import Options"
-                                            }, void 0, false, {
-                                                fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                lineNumber: 370,
-                                                columnNumber: 17
-                                            }, this),
-                                            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                                                className: "space-y-2",
-                                                children: [
-                                                    /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                                                        className: "flex items-center space-x-2",
-                                                        children: [
-                                                            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$checkbox$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Checkbox"], {
-                                                                id: "bulk-include-media",
-                                                                checked: importOptions.includeMediaFiles,
-                                                                onCheckedChange: (checked)=>setImportOptions((prev)=>({
-                                                                            ...prev,
-                                                                            includeMediaFiles: checked
-                                                                        }))
-                                                            }, void 0, false, {
-                                                                fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                                lineNumber: 373,
-                                                                columnNumber: 21
-                                                            }, this),
-                                                            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$label$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Label"], {
-                                                                htmlFor: "bulk-include-media",
-                                                                children: "Include media files"
-                                                            }, void 0, false, {
-                                                                fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                                lineNumber: 381,
-                                                                columnNumber: 21
-                                                            }, this)
-                                                        ]
-                                                    }, void 0, true, {
-                                                        fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                        lineNumber: 372,
-                                                        columnNumber: 19
-                                                    }, this),
-                                                    /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
-                                                        className: "flex items-center space-x-2",
-                                                        children: [
-                                                            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$checkbox$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Checkbox"], {
-                                                                id: "bulk-include-timeline",
-                                                                checked: importOptions.includeTimeline,
-                                                                onCheckedChange: (checked)=>setImportOptions((prev)=>({
-                                                                            ...prev,
-                                                                            includeTimeline: checked
-                                                                        }))
-                                                            }, void 0, false, {
-                                                                fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                                lineNumber: 384,
-                                                                columnNumber: 21
-                                                            }, this),
-                                                            /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$label$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Label"], {
-                                                                htmlFor: "bulk-include-timeline",
-                                                                children: "Include timeline"
-                                                            }, void 0, false, {
-                                                                fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                                lineNumber: 392,
-                                                                columnNumber: 21
-                                                            }, this)
-                                                        ]
-                                                    }, void 0, true, {
-                                                        fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                        lineNumber: 383,
-                                                        columnNumber: 19
-                                                    }, this)
-                                                ]
-                                            }, void 0, true, {
-                                                fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                lineNumber: 371,
-                                                columnNumber: 17
-                                            }, this)
-                                        ]
-                                    }, void 0, true, {
-                                        fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                        lineNumber: 369,
+                                        lineNumber: 343,
                                         columnNumber: 15
                                     }, this)
                                 ]
@@ -2634,7 +2529,7 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                                 children: "Export Options"
                                             }, void 0, false, {
                                                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                lineNumber: 400,
+                                                lineNumber: 361,
                                                 columnNumber: 17
                                             }, this),
                                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -2652,7 +2547,7 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                                                         }))
                                                             }, void 0, false, {
                                                                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                                lineNumber: 403,
+                                                                lineNumber: 364,
                                                                 columnNumber: 21
                                                             }, this),
                                                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$label$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Label"], {
@@ -2660,13 +2555,13 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                                                 children: "Include media files"
                                                             }, void 0, false, {
                                                                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                                lineNumber: 411,
+                                                                lineNumber: 372,
                                                                 columnNumber: 21
                                                             }, this)
                                                         ]
                                                     }, void 0, true, {
                                                         fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                        lineNumber: 402,
+                                                        lineNumber: 363,
                                                         columnNumber: 19
                                                     }, this),
                                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -2681,7 +2576,7 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                                                         }))
                                                             }, void 0, false, {
                                                                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                                lineNumber: 414,
+                                                                lineNumber: 375,
                                                                 columnNumber: 21
                                                             }, this),
                                                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$label$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Label"], {
@@ -2689,13 +2584,13 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                                                 children: "Include timeline"
                                                             }, void 0, false, {
                                                                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                                lineNumber: 422,
+                                                                lineNumber: 383,
                                                                 columnNumber: 21
                                                             }, this)
                                                         ]
                                                     }, void 0, true, {
                                                         fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                        lineNumber: 413,
+                                                        lineNumber: 374,
                                                         columnNumber: 19
                                                     }, this),
                                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -2710,7 +2605,7 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                                                         }))
                                                             }, void 0, false, {
                                                                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                                lineNumber: 425,
+                                                                lineNumber: 386,
                                                                 columnNumber: 21
                                                             }, this),
                                                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$label$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Label"], {
@@ -2718,25 +2613,25 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                                                 children: "Generate thumbnails"
                                                             }, void 0, false, {
                                                                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                                lineNumber: 433,
+                                                                lineNumber: 394,
                                                                 columnNumber: 21
                                                             }, this)
                                                         ]
                                                     }, void 0, true, {
                                                         fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                        lineNumber: 424,
+                                                        lineNumber: 385,
                                                         columnNumber: 19
                                                     }, this)
                                                 ]
                                             }, void 0, true, {
                                                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                lineNumber: 401,
+                                                lineNumber: 362,
                                                 columnNumber: 17
                                             }, this)
                                         ]
                                     }, void 0, true, {
                                         fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                        lineNumber: 399,
+                                        lineNumber: 360,
                                         columnNumber: 15
                                     }, this),
                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -2747,7 +2642,7 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                                 children: "Selected Projects:"
                                             }, void 0, false, {
                                                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                lineNumber: 439,
+                                                lineNumber: 400,
                                                 columnNumber: 17
                                             }, this),
                                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -2762,19 +2657,19 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                                         ]
                                                     }, projectId, true, {
                                                         fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                        lineNumber: 444,
+                                                        lineNumber: 405,
                                                         columnNumber: 23
                                                     }, this);
                                                 })
                                             }, void 0, false, {
                                                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                lineNumber: 440,
+                                                lineNumber: 401,
                                                 columnNumber: 17
                                             }, this)
                                         ]
                                     }, void 0, true, {
                                         fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                        lineNumber: 438,
+                                        lineNumber: 399,
                                         columnNumber: 15
                                     }, this)
                                 ]
@@ -2787,7 +2682,7 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                         className: "w-full"
                                     }, void 0, false, {
                                         fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                        lineNumber: 456,
+                                        lineNumber: 417,
                                         columnNumber: 15
                                     }, this),
                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("p", {
@@ -2800,13 +2695,13 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                         ]
                                     }, void 0, true, {
                                         fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                        lineNumber: 457,
+                                        lineNumber: 418,
                                         columnNumber: 15
                                     }, this)
                                 ]
                             }, void 0, true, {
                                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                lineNumber: 455,
+                                lineNumber: 416,
                                 columnNumber: 13
                             }, this),
                             error && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$alert$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Alert"], {
@@ -2816,20 +2711,20 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                         className: "h-4 w-4"
                                     }, void 0, false, {
                                         fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                        lineNumber: 465,
+                                        lineNumber: 426,
                                         columnNumber: 15
                                     }, this),
                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$alert$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["AlertDescription"], {
                                         children: error
                                     }, void 0, false, {
                                         fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                        lineNumber: 466,
+                                        lineNumber: 427,
                                         columnNumber: 15
                                     }, this)
                                 ]
                             }, void 0, true, {
                                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                lineNumber: 464,
+                                lineNumber: 425,
                                 columnNumber: 13
                             }, this),
                             success && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$alert$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Alert"], {
@@ -2838,20 +2733,20 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                         className: "h-4 w-4"
                                     }, void 0, false, {
                                         fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                        lineNumber: 472,
+                                        lineNumber: 433,
                                         columnNumber: 15
                                     }, this),
                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$alert$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["AlertDescription"], {
                                         children: success
                                     }, void 0, false, {
                                         fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                        lineNumber: 473,
+                                        lineNumber: 434,
                                         columnNumber: 15
                                     }, this)
                                 ]
                             }, void 0, true, {
                                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                lineNumber: 471,
+                                lineNumber: 432,
                                 columnNumber: 13
                             }, this),
                             results.length > 0 && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -2862,7 +2757,7 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                         children: "Results:"
                                     }, void 0, false, {
                                         fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                        lineNumber: 479,
+                                        lineNumber: 440,
                                         columnNumber: 15
                                     }, this),
                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("div", {
@@ -2874,13 +2769,13 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                                         className: "h-3 w-3 text-green-500"
                                                     }, void 0, false, {
                                                         fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                        lineNumber: 484,
+                                                        lineNumber: 445,
                                                         columnNumber: 23
                                                     }, this) : /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$lucide$2d$react$40$0$2e$468$2e$0$2b$f4eacebf2041cd4f$2f$node_modules$2f$lucide$2d$react$2f$dist$2f$esm$2f$icons$2f$circle$2d$alert$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__$3c$export__default__as__AlertCircle$3e$__["AlertCircle"], {
                                                         className: "h-3 w-3 text-red-500"
                                                     }, void 0, false, {
                                                         fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                        lineNumber: 486,
+                                                        lineNumber: 447,
                                                         columnNumber: 23
                                                     }, this),
                                                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
@@ -2888,7 +2783,7 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                                         children: result.projectName
                                                     }, void 0, false, {
                                                         fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                        lineNumber: 488,
+                                                        lineNumber: 449,
                                                         columnNumber: 21
                                                     }, this),
                                                     result.error && /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])("span", {
@@ -2899,30 +2794,30 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                                         ]
                                                     }, void 0, true, {
                                                         fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                        lineNumber: 492,
+                                                        lineNumber: 453,
                                                         columnNumber: 23
                                                     }, this)
                                                 ]
                                             }, index, true, {
                                                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                lineNumber: 482,
+                                                lineNumber: 443,
                                                 columnNumber: 19
                                             }, this))
                                     }, void 0, false, {
                                         fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                        lineNumber: 480,
+                                        lineNumber: 441,
                                         columnNumber: 15
                                     }, this)
                                 ]
                             }, void 0, true, {
                                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                lineNumber: 478,
+                                lineNumber: 439,
                                 columnNumber: 13
                             }, this)
                         ]
                     }, void 0, true, {
                         fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                        lineNumber: 316,
+                        lineNumber: 303,
                         columnNumber: 9
                     }, this),
                     /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$dialog$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["DialogFooter"], {
@@ -2934,7 +2829,7 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                 children: "Cancel"
                             }, void 0, false, {
                                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                lineNumber: 502,
+                                lineNumber: 463,
                                 columnNumber: 11
                             }, this),
                             /*#__PURE__*/ (0, __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f2e$bun$2f$next$40$15$2e$4$2e$5$2b$6dbf9a050bc9aadb$2f$node_modules$2f$next$2f$dist$2f$server$2f$route$2d$modules$2f$app$2d$page$2f$vendored$2f$ssr$2f$react$2d$jsx$2d$dev$2d$runtime$2e$js__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["jsxDEV"])(__TURBOPACK__imported__module__$5b$project$5d2f$apps$2f$web$2f$src$2f$components$2f$ui$2f$button$2e$tsx__$5b$app$2d$ssr$5d$__$28$ecmascript$29$__["Button"], {
@@ -2946,7 +2841,7 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                             className: "h-4 w-4 mr-2 animate-spin"
                                         }, void 0, false, {
                                             fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                            lineNumber: 515,
+                                            lineNumber: 476,
                                             columnNumber: 17
                                         }, this),
                                         mode === "import" ? "Importing..." : "Exporting..."
@@ -2958,7 +2853,7 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                                 className: "h-4 w-4 mr-2"
                                             }, void 0, false, {
                                                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                lineNumber: 522,
+                                                lineNumber: 483,
                                                 columnNumber: 21
                                             }, this),
                                             "Import Projects"
@@ -2969,7 +2864,7 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                                 className: "h-4 w-4 mr-2"
                                             }, void 0, false, {
                                                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                                lineNumber: 527,
+                                                lineNumber: 488,
                                                 columnNumber: 21
                                             }, this),
                                             "Export Projects"
@@ -2978,25 +2873,25 @@ function BulkImportExport({ selectedProjects, onComplete, children }) {
                                 }, void 0, false)
                             }, void 0, false, {
                                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                                lineNumber: 509,
+                                lineNumber: 470,
                                 columnNumber: 11
                             }, this)
                         ]
                     }, void 0, true, {
                         fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                        lineNumber: 501,
+                        lineNumber: 462,
                         columnNumber: 9
                     }, this)
                 ]
             }, void 0, true, {
                 fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-                lineNumber: 293,
+                lineNumber: 280,
                 columnNumber: 7
             }, this)
         ]
     }, void 0, true, {
         fileName: "[project]/apps/web/src/components/project-import-export/bulk-import-export.tsx",
-        lineNumber: 289,
+        lineNumber: 276,
         columnNumber: 5
     }, this);
 }

@@ -134,7 +134,6 @@ export interface ProjectExportOptions {
   compressMediaFiles: boolean; // 是否压缩媒体文件
   quality: "low" | "medium" | "high"; // 媒体文件压缩质量
   generateThumbnail: boolean; // 是否生成缩略图
-  exportFormat: "opencut" | "zip"; // 导出格式：单个文件或压缩包
 }
 
 // 导入/导出结果

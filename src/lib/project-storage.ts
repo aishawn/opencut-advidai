@@ -108,7 +108,6 @@ export async function exportProjectToFile(
     compressMediaFiles: false,
     quality: "high",
     generateThumbnail: true,
-    exportFormat: "zip",
   }
 ): Promise<ProjectExportResult> {
   try {
@@ -174,12 +173,8 @@ export async function exportProjectToFile(
       exportedBy: "OpenCut",
     };
 
-    // 根据导出格式选择处理方式
-    if (options.exportFormat === "zip") {
-      return await exportProjectAsZip(project, storageFile, mediaFiles, options);
-    } else {
-      return await exportProjectAsSingleFile(project, storageFile, options);
-    }
+    // 直接导出为ZIP格式
+    return await exportProjectAsZip(project, storageFile, mediaFiles, options);
   } catch (error) {
     console.error("Export project failed:", error);
     return {
@@ -189,29 +184,6 @@ export async function exportProjectToFile(
   }
 }
 
-// 导出为单个.opencut文件
-async function exportProjectAsSingleFile(
-  project: TProject,
-  storageFile: ProjectStorageFile,
-  options: ProjectExportOptions
-): Promise<ProjectExportResult> {
-  // 转换为JSON
-  const jsonString = JSON.stringify(storageFile, null, 2);
-  const fileData = new TextEncoder().encode(jsonString);
-  const arrayBuffer = new ArrayBuffer(fileData.length);
-  const uint8Array = new Uint8Array(arrayBuffer);
-  uint8Array.set(fileData);
-
-  // 生成文件名
-  const fileName = `${project.name.replace(/[^a-zA-Z0-9]/g, "_")}_${new Date().toISOString().split("T")[0]}.opencut`;
-
-  return {
-    success: true,
-    fileData: arrayBuffer,
-    fileName,
-    fileSize: fileData.length,
-  };
-}
 
 // 导出为压缩包格式
 async function exportProjectAsZip(
@@ -286,6 +258,112 @@ function getFileExtension(fileName: string): string {
   return lastDot !== -1 ? fileName.substring(lastDot) : '';
 }
 
+
+// 从ZIP文件导入项目
+async function importProjectFromZip(
+  fileData: ArrayBuffer,
+  options: ProjectImportOptions
+): Promise<ProjectImportResult & { storageFile?: ProjectStorageFile; mediaFiles?: MediaFile[] }> {
+  try {
+    const JSZip = (await import("jszip")).default;
+    const zip = await JSZip.loadAsync(fileData);
+
+    // 1. 读取项目文件
+    const projectFile = zip.file("project.opencut");
+    if (!projectFile) {
+      return {
+        success: false,
+        error: "Project file not found in ZIP archive",
+      };
+    }
+
+    const projectContent = await projectFile.async("text");
+    const storageFile = JSON.parse(projectContent) as ProjectStorageFile;
+
+    // 2. 读取媒体文件
+    const mediaFiles: MediaFile[] = [];
+    if (options.includeMediaFiles) {
+      const mediaFolder = zip.folder("media");
+      if (mediaFolder) {
+        const mediaFilesPromises = Object.keys(mediaFolder.files).map(async (fileName) => {
+          const file = mediaFolder.files[fileName];
+          if (!file.dir) {
+            try {
+              const arrayBuffer = await file.async("arraybuffer");
+              const blob = new Blob([arrayBuffer]);
+              const fileObj = new File([blob], fileName, { type: getMimeTypeFromExtension(fileName) });
+              
+              // 从文件名提取媒体ID
+              const mediaId = fileName.substring(0, fileName.lastIndexOf('.'));
+              
+              return {
+                id: mediaId,
+                name: fileName,
+                type: getFileTypeFromExtension(fileName),
+                file: fileObj,
+                url: URL.createObjectURL(blob),
+              } as MediaFile;
+            } catch (error) {
+              console.warn(`Failed to process media file ${fileName}:`, error);
+              return null;
+            }
+          }
+          return null;
+        });
+
+        const results = await Promise.all(mediaFilesPromises);
+        mediaFiles.push(...results.filter((file): file is MediaFile => file !== null));
+      }
+    }
+
+    return {
+      success: true,
+      storageFile,
+      mediaFiles,
+    };
+  } catch (error) {
+    console.error("Failed to import project from ZIP:", error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
+  }
+}
+
+// 根据文件扩展名获取MIME类型
+function getMimeTypeFromExtension(fileName: string): string {
+  const extension = getFileExtension(fileName).toLowerCase();
+  const mimeTypes: Record<string, string> = {
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.mp4': 'video/mp4',
+    '.webm': 'video/webm',
+    '.avi': 'video/x-msvideo',
+    '.mov': 'video/quicktime',
+    '.mp3': 'audio/mpeg',
+    '.wav': 'audio/wav',
+    '.ogg': 'audio/ogg',
+    '.aac': 'audio/aac',
+  };
+  return mimeTypes[extension] || 'application/octet-stream';
+}
+
+// 根据文件扩展名获取文件类型
+function getFileTypeFromExtension(fileName: string): "image" | "video" | "audio" {
+  const extension = getFileExtension(fileName).toLowerCase();
+  if (['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(extension)) {
+    return 'image';
+  } else if (['.mp4', '.webm', '.avi', '.mov'].includes(extension)) {
+    return 'video';
+  } else if (['.mp3', '.wav', '.ogg', '.aac'].includes(extension)) {
+    return 'audio';
+  }
+  return 'image'; // 默认类型
+}
+
 // 从存储文件导入项目
 export async function importProjectFromFile(
   fileData: ArrayBuffer,
@@ -296,19 +374,14 @@ export async function importProjectFromFile(
   }
 ): Promise<ProjectImportResult> {
   try {
-    // 验证文件
-    const validation = validateProjectFile(fileData);
-    if (!validation.isValid) {
-      return {
-        success: false,
-        error: `Invalid project file: ${validation.errors.join(", ")}`,
-        warnings: validation.warnings,
-      };
+    // 只支持ZIP格式
+    const result = await importProjectFromZip(fileData, options);
+    if (!result.success) {
+      return result;
     }
-
-    // 解析文件数据
-    const text = new TextDecoder().decode(fileData);
-    const storageFile = JSON.parse(text) as ProjectStorageFile;
+    
+    const storageFile = result.storageFile!;
+    const mediaFiles = result.mediaFiles || [];
 
     const projectStore = useProjectStore.getState();
     const mediaStore = useMediaStore.getState();
@@ -349,7 +422,6 @@ export async function importProjectFromFile(
     return {
       success: true,
       projectId: newProjectId,
-      warnings: validation.warnings,
       importedMediaCount,
       importedTracksCount,
     };
