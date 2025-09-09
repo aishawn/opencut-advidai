@@ -1,0 +1,6 @@
+{
+  "version": 3,
+  "sources": [],
+  "sections": [
+    {"offset": {"line": 7, "column": 0}, "map": {"version":3,"sources":["file:///C:/shawn/1code/1project-cur/video-remake/clip/OpenCut-main/apps/web/src/app/editor/%5Bproject_id%5D/layout.tsx"],"sourcesContent":["\"use client\";\n\nexport default function EditorLayout({\n  children,\n}: {\n  children: React.ReactNode;\n}) {\n  return <div>{children}</div>;\n}\n"],"names":[],"mappings":";;;;AAAA;;AAEe,SAAS,aAAa,KAIpC;QAJoC,EACnC,QAAQ,EAGT,GAJoC;IAKnC,qBAAO,kQAAC;kBAAK;;;;;;AACf;KANwB","debugId":null}}]
+}

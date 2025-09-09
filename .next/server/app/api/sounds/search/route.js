@@ -1,0 +1,11 @@
+const CHUNK_PUBLIC_PATH = "server/app/api/sounds/search/route.js";
+const runtime = require("../../../../chunks/[turbopack]_runtime.js");
+runtime.loadChunk("server/chunks/8d112_next_212e9df8._.js");
+runtime.loadChunk("server/chunks/c57cf_zod_v3_0b0ef2c1._.js");
+runtime.loadChunk("server/chunks/bf3f2_zod_v4_15018096._.js");
+runtime.loadChunk("server/chunks/21b04_@upstash_redis_12c152f3._.js");
+runtime.loadChunk("server/chunks/node_modules__bun_3dafb8cc._.js");
+runtime.loadChunk("server/chunks/[root-of-the-server]__87a16800._.js");
+runtime.getOrInstantiateRuntimeModule("[project]/apps/web/.next-internal/server/app/api/sounds/search/route/actions.js [app-rsc] (server actions loader, ecmascript)", CHUNK_PUBLIC_PATH);
+runtime.getOrInstantiateRuntimeModule("[project]/node_modules/.bun/next@15.4.5+6dbf9a050bc9aadb/node_modules/next/dist/esm/build/templates/app-route.js { INNER_APP_ROUTE => \"[project]/apps/web/src/app/api/sounds/search/route.ts [app-route] (ecmascript)\" } [app-route] (ecmascript)", CHUNK_PUBLIC_PATH);
+module.exports = runtime.getOrInstantiateRuntimeModule("[project]/node_modules/.bun/next@15.4.5+6dbf9a050bc9aadb/node_modules/next/dist/esm/build/templates/app-route.js { INNER_APP_ROUTE => \"[project]/apps/web/src/app/api/sounds/search/route.ts [app-route] (ecmascript)\" } [app-route] (ecmascript)", CHUNK_PUBLIC_PATH).exports;

@@ -1,0 +1,6 @@
+{
+  "version": 3,
+  "sources": [],
+  "sections": [
+    {"offset": {"line": 21, "column": 0}, "map": {"version":3,"sources":["turbopack:///[project]/apps/web/src/middleware.ts"],"sourcesContent":["import { NextResponse } from \"next/server\";\nimport type { NextRequest } from \"next/server\";\n\nexport async function middleware(request: NextRequest) {\n  // Handle fuckcapcut.com domain redirect\n  if (request.headers.get(\"host\") === \"fuckcapcut.com\") {\n    return NextResponse.redirect(\"https://opencut.app/why-not-capcut\", 301);\n  }\n\n  return NextResponse.next();\n}\n\nexport const config = {\n  matcher: [\n    /*\n     * Match all request paths except for the ones starting with:\n     * - api (API routes)\n     * - _next/static (static files)\n     * - _next/image (image optimization files)\n     * - favicon.ico (favicon file)\n     */\n    \"/((?!api|_next/static|_next/image|favicon.ico).*)\",\n  ],\n};\n"],"names":[],"mappings":";;;;AAAA;AAAA;;AAGO,eAAe,WAAW,OAAoB;IACnD,wCAAwC;IACxC,IAAI,QAAQ,OAAO,CAAC,GAAG,CAAC,YAAY,kBAAkB;QACpD,OAAO,kQAAA,CAAA,eAAY,CAAC,QAAQ,CAAC,sCAAsC;IACrE;IAEA,OAAO,kQAAA,CAAA,eAAY,CAAC,IAAI;AAC1B;AAEO,MAAM,SAAS;IACpB,SAAS;QACP;;;;;;KAMC,GACD;KACD;AACH"}}]
+}
