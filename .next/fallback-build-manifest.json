@@ -1,37 +1,6 @@
 {
   "pages": {
-    "/_app": [
-      "static/chunks/8d112_next_dist_compiled_next-devtools_index_75cc814f.js",
-      "static/chunks/8d112_next_dist_compiled_84207a1c._.js",
-      "static/chunks/8d112_next_dist_shared_lib_121b22dd._.js",
-      "static/chunks/8d112_next_dist_client_2a899892._.js",
-      "static/chunks/8d112_next_dist_76c44571._.js",
-      "static/chunks/8d112_next_app_715d180e.js",
-      "static/chunks/[next]_entry_page-loader_ts_d768a10a._.js",
-      "static/chunks/0ca6b_react_4b3aad6b._.js",
-      "static/chunks/d3be7_react-dom_cjs_react-dom_development_94a0268a.js",
-      "static/chunks/d3be7_react-dom_4c28ad72._.js",
-      "static/chunks/node_modules__bun_0eb8999c._.js",
-      "static/chunks/[root-of-the-server]__48b62173._.js",
-      "static/chunks/apps_web_pages__app_5771e187._.js",
-      "static/chunks/apps_web_pages__app_ee2c3b39._.js"
-    ],
-    "/_error": [
-      "static/chunks/8d112_next_dist_compiled_next-devtools_index_75cc814f.js",
-      "static/chunks/8d112_next_dist_compiled_84207a1c._.js",
-      "static/chunks/8d112_next_dist_shared_lib_8bb0e762._.js",
-      "static/chunks/8d112_next_dist_client_2a899892._.js",
-      "static/chunks/8d112_next_dist_5c825052._.js",
-      "static/chunks/8d112_next_error_daf6393e.js",
-      "static/chunks/[next]_entry_page-loader_ts_bc5bcb9b._.js",
-      "static/chunks/0ca6b_react_4b3aad6b._.js",
-      "static/chunks/d3be7_react-dom_cjs_react-dom_development_94a0268a.js",
-      "static/chunks/d3be7_react-dom_4c28ad72._.js",
-      "static/chunks/node_modules__bun_0eb8999c._.js",
-      "static/chunks/[root-of-the-server]__f19be104._.js",
-      "static/chunks/apps_web_pages__error_5771e187._.js",
-      "static/chunks/apps_web_pages__error_cee2fad9._.js"
-    ]
+    "/_app": []
   },
   "devFiles": [],
   "ampDevFiles": [],
